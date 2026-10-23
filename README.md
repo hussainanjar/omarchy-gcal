@@ -22,6 +22,13 @@
 | Middle-click | Sync now |
 | Right-click | Open Google Calendar |
 
+## Requirements
+
+- Omarchy with the Quickshell-based shell (Omarchy Quattro)
+- `python3` (standard library only)
+- [gcalcli](https://github.com/insanum/gcalcli) 4.5 or newer, installed in step 1 below
+- A Google account and your own Google Cloud OAuth client (free), created in step 2 below
+
 ## Install
 
 ```bash
@@ -108,6 +115,15 @@ omarchy-shell io.github.hussainanjar.gcal toggle          # agenda popup
 omarchy-shell io.github.hussainanjar.gcal.setup open      # setup guide
 omarchy-shell io.github.hussainanjar.gcal.meeting preview # reminder card for the next meeting
 ```
+
+## Remove
+
+```bash
+omarchy plugin remove io.github.hussainanjar.gcal
+rm -rf ~/.cache/omarchy-gcal
+```
+
+The plugin never writes outside `~/.cache/omarchy-gcal`. Your Google sign-in belongs to gcalcli; to remove it too, delete `~/.local/share/gcalcli/oauth`, revoke access at [Google Account permissions](https://myaccount.google.com/permissions), and uninstall gcalcli if nothing else uses it (`omarchy pkg drop gcalcli`).
 
 ## How it works
 
