@@ -22,6 +22,10 @@
 | Middle-click | Sync now |
 | Right-click | Open Google Calendar |
 
+<p align="center">
+  <img src="docs/meeting-reminder.png" alt="The meeting reminder card with Join meeting, Details and Dismiss" width="460">
+</p>
+
 ## Requirements
 
 - Omarchy with the Quickshell-based shell (Omarchy Quattro)
