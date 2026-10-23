@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.hussainanjar.gcal",
+  "name": "Google Calendar",
+  "version": "1.0.0",
+  "author": "Hussain Anjar",
+  "license": "MIT",
+  "description": "Your next Google Calendar event in the Omarchy bar, an agenda popup with one-click Meet links, meeting reminders, and a built-in setup guide.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Google Calendar",
+    "description": "Next event with a countdown, an agenda popup, and a reminder before each meeting.",
+    "category": "Time",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "daysAhead": 2,
+      "refreshMinutes": 5,
+      "reminderMinutes": 2,
+      "reminderStyle": "Popup",
+      "calendars": "",
+      "gcalcliPath": ""
+    },
+    "schema": [
+      { "key": "daysAhead", "type": "integer", "label": "Days of agenda", "min": 1, "max": 14, "step": 1, "defaultValue": 2 },
+      { "key": "refreshMinutes", "type": "integer", "label": "Sync every (minutes)", "min": 1, "max": 60, "step": 1, "defaultValue": 5 },
+      { "key": "reminderMinutes", "type": "integer", "label": "Remind before (minutes)", "min": 0, "max": 30, "step": 1, "defaultValue": 2, "description": "0 turns reminders off." },
+      { "key": "reminderStyle", "type": "enum", "label": "Reminder style", "options": ["Popup", "Notification"], "defaultValue": "Popup" },
+      { "key": "calendars", "type": "string", "label": "Calendars", "defaultValue": "", "description": "Comma-separated calendar names. Leave empty for all calendars." },
+      { "key": "gcalcliPath", "type": "path", "label": "Path to gcalcli", "defaultValue": "", "description": "Leave empty to find gcalcli on PATH." }
+    ]
+  }
+}

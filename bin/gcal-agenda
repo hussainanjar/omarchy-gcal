@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""Google Calendar agenda cache for the Omarchy bar widget.
+
+  gcal-agenda tick [options]   fetch if the cache is stale, then print events due a reminder
+  gcal-agenda fetch [options]  pull the agenda from gcalcli into the cache now
+  gcal-agenda setup            interactive first-time setup (install gcalcli, sign in, sync)
+
+Options: --days N  --refresh MIN  --lead MIN  --calendar NAME (repeatable)  --gcalcli PATH
+
+Cache: $XDG_CACHE_HOME/omarchy-gcal/agenda.json, read by the bar widget.
+"""
+
+import argparse
+import csv
+import fcntl
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "omarchy-gcal"
+AGENDA = CACHE_DIR / "agenda.json"
+REMINDED = CACHE_DIR / "reminded.json"
+LOCK = CACHE_DIR / "lock"
+DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+OAUTH_FILES = [DATA_HOME / "gcalcli/oauth", Path.home() / ".gcalcli_oauth"]
+AUTH_ERROR = re.compile(r"invalid_grant|RefreshError|credentials|unauthori[sz]ed", re.I)
+
+CONSOLE_API = "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
+CONSOLE_CLIENT = "https://console.cloud.google.com/auth/clients/create"
+
+
+def write_json(path, data):
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1))
+    tmp.replace(path)
+
+
+def read_json(path, fallback):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return fallback
+
+
+def gcalcli_path(opts):
+    return shutil.which(opts.gcalcli or "gcalcli")
+
+
+def signed_in():
+    return any(p.is_file() for p in OAUTH_FILES)
+
+
+def save(state, error="", events=None, opts=None):
+    data = read_json(AGENDA, {"events": []})
+    if events is not None:
+        data["events"] = events
+        data["updated"] = int(time.time())
+    data.update({
+        "state": state,
+        "error": error,
+        "checked": int(time.time()),
+        "gcalcli": bool(opts and gcalcli_path(opts)),
+        "signedIn": signed_in(),
+    })
+    write_json(AGENDA, data)
+    return state == "ok"
+
+
+def parse_when(date, clock):
+    return datetime.fromisoformat(f"{date}T{clock or '00:00'}")
+
+
+def fetch(opts):
+    binary = gcalcli_path(opts)
+    if not binary:
+        return save("missing", "gcalcli is not installed", opts=opts)
+    if not signed_in():
+        return save("signed-out", "Not signed in to Google", opts=opts)
+
+    now = datetime.now()
+    cmd = [binary, "--nocolor"]
+    for name in opts.calendar:
+        cmd += ["--calendar", name]
+    cmd += [
+        "agenda", "--tsv",
+        "--details", "url", "--details", "conference",
+        "--details", "location", "--details", "description",
+        now.strftime("%Y-%m-%dT%H:%M"),
+        (now + timedelta(days=opts.days)).strftime("%Y-%m-%d"),
+    ]
+    # stdin is closed so an expired login fails instead of waiting on a prompt.
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return save("error", str(e), opts=opts)
+    if out.returncode != 0:
+        message = (out.stderr.strip().splitlines() or ["gcalcli failed"])[-1]
+        if AUTH_ERROR.search(out.stderr):
+            return save("signed-out", "Google sign-in expired, sign in again", opts=opts)
+        return save("error", message, opts=opts)
+
+    events = []
+    for row in csv.DictReader(out.stdout.splitlines(keepends=True), delimiter="\t"):
+        start = parse_when(row["start_date"], row.get("start_time"))
+        end = parse_when(row.get("end_date") or row["start_date"], row.get("end_time"))
+        events.append({
+            "title": row.get("title") or "(no title)",
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "allDay": not row.get("start_time"),
+            "location": row.get("location") or "",
+            "description": row.get("description") or "",
+            "meet": row.get("conference_uri") or row.get("hangout_link") or "",
+            "link": row.get("html_link") or "",
+        })
+    return save("ok", events=events, opts=opts)
+
+
+def due(opts):
+    """Events starting within the lead time that no other bar has claimed yet."""
+    if opts.lead <= 0:
+        return []
+    now = datetime.now()
+    claimed = {k: v for k, v in read_json(REMINDED, {}).items() if v > time.time() - 86400}
+    found = []
+    for ev in read_json(AGENDA, {}).get("events", []):
+        if ev.get("allDay"):
+            continue
+        minutes = (datetime.fromisoformat(ev["start"]) - now).total_seconds() / 60
+        key = f"{ev['start']}|{ev['title']}"
+        if key in claimed or not (-1 <= minutes <= opts.lead):
+            continue
+        claimed[key] = time.time()
+        found.append(ev)
+    write_json(REMINDED, claimed)
+    return found
+
+
+def tick(opts):
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # One bar per monitor runs this; the lock keeps them from fetching or reminding twice.
+    with open(LOCK, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        data = read_json(AGENDA, {})
+        stale = time.time() - data.get("checked", 0) >= opts.refresh * 60
+        if stale or data.get("state") != "ok":
+            fetch(opts)
+        print(json.dumps(due(opts)))
+
+
+def setup(opts):
+    def step(title):
+        print(f"\n\033[1m{title}\033[0m")
+
+    def ask(prompt):
+        try:
+            return input(prompt).strip().lower() in ("", "y", "yes")
+        except EOFError:
+            return False
+
+    step("1. gcalcli")
+    if gcalcli_path(opts):
+        print(f"   Found {gcalcli_path(opts)}")
+    elif ask("   gcalcli is not installed. Install it from the AUR now? [Y/n] "):
+        subprocess.run(["omarchy", "pkg", "aur", "add", "gcalcli"])
+    if not gcalcli_path(opts):
+        print("   gcalcli is still missing. Install it and run setup again.")
+        return 1
+
+    step("2. Google OAuth client")
+    print("   gcalcli needs its own OAuth client from Google Cloud:")
+    print("   a. Create (or pick) a project and enable the Google Calendar API")
+    print(f"      {CONSOLE_API}")
+    print("   b. Configure the consent screen (Audience: External) and add your")
+    print("      Google account as a test user, or publish the app to Production")
+    print("      so the sign-in does not expire after 7 days")
+    print("   c. Create an OAuth client with application type 'Desktop app'")
+    print(f"      {CONSOLE_CLIENT}")
+    print("   Keep the client ID and client secret at hand for the next step.")
+    if ask("   Open these pages in your browser? [Y/n] "):
+        for url in (CONSOLE_API, CONSOLE_CLIENT):
+            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    step("3. Sign in")
+    if signed_in() and not ask("   Already signed in. Sign in again? [Y/n] "):
+        pass
+    else:
+        print("   Paste the client ID and secret when asked, then approve access in the browser.")
+        subprocess.run([gcalcli_path(opts), "init"])
+        if not signed_in():
+            print("   Sign-in did not complete. Run setup again to retry.")
+            return 1
+
+    step("4. Sync")
+    if fetch(opts):
+        count = len(read_json(AGENDA, {}).get("events", []))
+        print(f"   Synced {count} event(s). The bar widget updates by itself.")
+        return 0
+    print(f"   Sync failed: {read_json(AGENDA, {}).get('error')}")
+    return 1
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("action", nargs="?", default="tick", choices=["tick", "fetch", "setup"])
+    parser.add_argument("--days", type=int, default=2)
+    parser.add_argument("--refresh", type=int, default=5)
+    parser.add_argument("--lead", type=int, default=2)
+    parser.add_argument("--calendar", action="append", default=[])
+    parser.add_argument("--gcalcli", default="")
+    opts = parser.parse_args()
+    if opts.action == "tick":
+        tick(opts)
+    elif opts.action == "fetch":
+        sys.exit(0 if fetch(opts) else 1)
+    else:
+        sys.exit(setup(opts))
+
+
+if __name__ == "__main__":
+    main()
