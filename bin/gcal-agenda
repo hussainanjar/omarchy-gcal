@@ -35,10 +35,19 @@ CONSOLE_API = "https://console.cloud.google.com/apis/library/calendar-json.googl
 CONSOLE_CLIENT = "https://console.cloud.google.com/auth/clients/create"
 
 
+def ensure_cache_dir():
+    # The cache holds event titles, descriptions and meeting links, so only the owner may read it.
+    CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    CACHE_DIR.chmod(0o700)
+
+
 def write_json(path, data):
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_cache_dir()
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=1))
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(data, indent=1))
     tmp.replace(path)
 
 
@@ -144,7 +153,7 @@ def due(opts):
 
 
 def tick(opts):
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_cache_dir()
     # One bar per monitor runs this; the lock keeps them from fetching or reminding twice.
     with open(LOCK, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
