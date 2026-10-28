@@ -79,7 +79,7 @@ Click **Sign in** in the popup, or run the guided setup in a terminal:
 ~/.config/omarchy/plugins/io.github.hussainanjar.gcal/bin/gcal-agenda setup
 ```
 
-It runs `gcalcli init`. Paste the client ID and secret, approve access in the browser, and the token is saved to `~/.local/share/gcalcli/oauth`.
+It runs `gcalcli init`. Paste the client ID and secret, approve access in the browser, and the token is saved to `~/.local/share/gcalcli/oauth`. The plugin keeps that folder readable only by you (`0700`, files `0600`), and tightens it on every sync if gcalcli was set up some other way.
 
 ### 4. Sync
 
@@ -127,7 +127,7 @@ omarchy plugin remove io.github.hussainanjar.gcal
 rm -rf ~/.cache/omarchy-gcal
 ```
 
-The plugin never writes outside `~/.cache/omarchy-gcal`. Your Google sign-in belongs to gcalcli; to remove it too, delete `~/.local/share/gcalcli/oauth`, revoke access at [Google Account permissions](https://myaccount.google.com/permissions), and uninstall gcalcli if nothing else uses it (`omarchy pkg drop gcalcli`).
+The plugin keeps its own files in `~/.cache/omarchy-gcal` and only changes permissions on gcalcli's token folder. Your Google sign-in belongs to gcalcli; to remove it too, delete `~/.local/share/gcalcli/oauth`, revoke access at [Google Account permissions](https://myaccount.google.com/permissions), and uninstall gcalcli if nothing else uses it (`omarchy pkg drop gcalcli`).
 
 ## How it works
 

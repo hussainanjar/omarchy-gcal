@@ -51,6 +51,24 @@ def write_json(path, data):
     tmp.replace(path)
 
 
+def private_umask():
+    # gcalcli writes its token with the caller's umask, so its children run with 077.
+    os.umask(0o077)
+
+
+def secure_gcalcli_files():
+    # Tighten a token saved by an older run or by `gcalcli init` started by hand.
+    data_dir = DATA_HOME / "gcalcli"
+    if data_dir.is_dir():
+        data_dir.chmod(0o700)
+        for path in data_dir.iterdir():
+            if path.is_file():
+                path.chmod(0o600)
+    for path in OAUTH_FILES:
+        if path.is_file():
+            path.chmod(0o600)
+
+
 def read_json(path, fallback):
     try:
         return json.loads(path.read_text())
@@ -106,9 +124,12 @@ def fetch(opts):
     ]
     # stdin is closed so an expired login fails instead of waiting on a prompt.
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+                             preexec_fn=private_umask)
     except (OSError, subprocess.TimeoutExpired) as e:
         return save("error", str(e), opts=opts)
+    finally:
+        secure_gcalcli_files()
     if out.returncode != 0:
         message = (out.stderr.strip().splitlines() or ["gcalcli failed"])[-1]
         if AUTH_ERROR.search(out.stderr):
@@ -202,7 +223,8 @@ def setup(opts):
         pass
     else:
         print("   Paste the client ID and secret when asked, then approve access in the browser.")
-        subprocess.run([gcalcli_path(opts), "init"])
+        subprocess.run([gcalcli_path(opts), "init"], preexec_fn=private_umask)
+        secure_gcalcli_files()
         if not signed_in():
             print("   Sign-in did not complete. Run setup again to retry.")
             return 1
