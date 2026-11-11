@@ -22,8 +22,10 @@ Flickable {
     },
     {
       title: "Create a Google OAuth client",
-      done: !!status.signedIn,
-      body: "Google requires every gcalcli user to bring their own OAuth client. In Google Cloud Console:\n" +
+      done: !!status.signedIn || !!status.clientConfigured,
+      body: status.clientConfigured
+        ? "Saved Google OAuth clients are available. Choose one when you click Sign in; no copying of credentials is needed."
+        : "Google requires every gcalcli user to bring their own OAuth client. In Google Cloud Console:\n" +
             "1. Create a project and enable the Google Calendar API.\n" +
             "2. Under Google Auth Platform, set Audience to External and add your Google account as a test user.\n" +
             "3. Create a client with application type Desktop app and keep its ID and secret.\n" +
@@ -38,7 +40,9 @@ Flickable {
       done: !!status.signedIn && status.state !== "signed-out",
       body: status.state === "signed-out" && status.signedIn
         ? "Your Google sign-in expired. Sign in again to resume syncing."
-        : "Opens a terminal that runs gcalcli init. Paste the client ID and secret, then approve access in your browser.",
+        : status.clientConfigured
+          ? "Choose a saved client in the terminal, then open the Google sign-in link and approve access in your browser."
+          : "Opens a terminal that runs gcalcli init. Paste the client ID and secret, then approve access in your browser.",
       code: "gcalcli init",
       actions: [{ label: "Sign in", run: () => widget.inTerminal(guide.setupCommand) }]
     },

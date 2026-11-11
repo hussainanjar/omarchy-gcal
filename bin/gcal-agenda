@@ -16,6 +16,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,27 @@ AUTH_ERROR = re.compile(r"invalid_grant|RefreshError|credentials|unauthori[sz]ed
 
 CONSOLE_API = "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
 CONSOLE_CLIENT = "https://console.cloud.google.com/auth/clients/create"
+
+
+def saved_clients():
+    folder = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "gcalcli"
+    clients = []
+    for path in [folder / "client.env", *sorted(folder.glob("client.env.*"))]:
+        if not path.is_file():
+            continue
+        values = {}
+        try:
+            for line in path.read_text().splitlines():
+                match = re.fullmatch(r"\s*(?:export\s+)?(GCALCLI_CLIENT_ID|GCALCLI_CLIENT_SECRET)\s*=\s*(.*)", line)
+                if match:
+                    words = shlex.split(match[2], comments=True)
+                    if len(words) == 1 and not any(c in words[0] for c in "\r\n\0"):
+                        values[match[1]] = words[0]
+        except (OSError, ValueError):
+            continue
+        if all(values.get(key) for key in ("GCALCLI_CLIENT_ID", "GCALCLI_CLIENT_SECRET")):
+            clients.append((path.name, values))
+    return clients
 
 
 def ensure_cache_dir():
@@ -95,6 +117,7 @@ def save(state, error="", events=None, opts=None):
         "checked": int(time.time()),
         "gcalcli": bool(opts and gcalcli_path(opts)),
         "signedIn": signed_in(),
+        "clientConfigured": bool(saved_clients()),
     })
     write_json(AGENDA, data)
     return state == "ok"
@@ -205,25 +228,52 @@ def setup(opts):
         return 1
 
     step("2. Google OAuth client")
-    print("   gcalcli needs its own OAuth client from Google Cloud:")
-    print("   a. Create (or pick) a project and enable the Google Calendar API")
-    print(f"      {CONSOLE_API}")
-    print("   b. Configure the consent screen (Audience: External) and add your")
-    print("      Google account as a test user, or publish the app to Production")
-    print("      so the sign-in does not expire after 7 days")
-    print("   c. Create an OAuth client with application type 'Desktop app'")
-    print(f"      {CONSOLE_CLIENT}")
-    print("   Keep the client ID and client secret at hand for the next step.")
-    if ask("   Open these pages in your browser? [Y/n] "):
+    clients = saved_clients()
+    credentials = None
+    if clients:
+        print("   Saved OAuth clients (credentials are kept private):")
+        for index, (name, _) in enumerate(clients, 1):
+            print(f"   {index}. {name}")
+        print("   0. Enter a different client manually")
+        while True:
+            try:
+                choice = int(input("   Choose a client number: "))
+            except EOFError:
+                return 1
+            except ValueError:
+                continue
+            if 0 <= choice <= len(clients):
+                credentials = clients[choice - 1][1] if choice else None
+                break
+    if credentials is None:
+        print("   gcalcli needs its own OAuth client from Google Cloud:")
+        print("   a. Create (or pick) a project and enable the Google Calendar API")
+        print(f"      {CONSOLE_API}")
+        print("   b. Configure the consent screen (Audience: External) and add your")
+        print("      Google account as a test user, or publish the app to Production")
+        print("      so the sign-in does not expire after 7 days")
+        print("   c. Create an OAuth client with application type 'Desktop app'")
+        print(f"      {CONSOLE_CLIENT}")
+        print("   Keep the client ID and client secret at hand for the next step.")
+    if credentials is None and ask("   Open these pages in your browser? [Y/n] "):
         for url in (CONSOLE_API, CONSOLE_CLIENT):
             subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     step("3. Sign in")
-    if signed_in() and not ask("   Already signed in. Sign in again? [Y/n] "):
+    already_signed_in = signed_in()
+    if already_signed_in and not ask("   Already signed in. Sign in again? [Y/n] "):
         pass
     else:
-        print("   Paste the client ID and secret when asked, then approve access in the browser.")
-        subprocess.run([gcalcli_path(opts), "init"], preexec_fn=private_umask)
+        if credentials:
+            print("   Using the saved client. Open the Google sign-in link below and approve access.")
+            # Keep the secret out of process arguments; only its prompt reads stdin.
+            subprocess.run([gcalcli_path(opts), "--noincluderc", "--client-id",
+                            credentials["GCALCLI_CLIENT_ID"], "init"], text=True,
+                           input=("y\n" if already_signed_in else "") + credentials["GCALCLI_CLIENT_SECRET"] + "\n",
+                           preexec_fn=private_umask)
+        else:
+            print("   Paste the client ID and secret when asked, then approve access in the browser.")
+            subprocess.run([gcalcli_path(opts), "init"], preexec_fn=private_umask)
         secure_gcalcli_files()
         if not signed_in():
             print("   Sign-in did not complete. Run setup again to retry.")

@@ -73,6 +73,24 @@ In the [Google Cloud Console](https://console.cloud.google.com/):
 
 ### 3. Sign in
 
+If you already have OAuth client credentials, save them in
+`~/.config/gcalcli/client.env` or a named file such as `client.env.personal`:
+
+```dotenv
+GCALCLI_CLIENT_ID="your-client-id.apps.googleusercontent.com"
+GCALCLI_CLIENT_SECRET="your-client-secret"
+```
+
+Keep the directory private (`chmod 700 ~/.config/gcalcli`) and each client file
+readable only by you (`chmod 600 ~/.config/gcalcli/client.env*`). With a custom
+`XDG_CONFIG_HOME`, use its `gcalcli` directory instead. The setup guide detects
+these files and lets you choose a client by filename, or enter a different one
+manually. Client files are parsed as data, never executed as shell scripts.
+The secret is passed to gcalcli through stdin, rather than process arguments.
+You still need to open Google's sign-in link and approve access in your browser.
+Choosing a different client reauthorizes the widget's single Google sign-in;
+it does not add another account or merge calendars from multiple accounts.
+
 Click **Sign in** in the popup, or run the guided setup in a terminal:
 
 ```bash
